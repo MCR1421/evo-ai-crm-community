@@ -50,5 +50,30 @@ RSpec.describe 'Api::V1::Internal::PriceGate', type: :request do
       body = JSON.parse(response.body)
       expect(body['released']).to be(true)
     end
+
+    it 'accepts the secret as a query param and extracts phone from meta.sender.phone_number (Automation Rule webhook shape)' do
+      allow(SellerEscalationExecution).to receive(:reset_for_conversation)
+
+      post '/api/v1/internal/price_gate/check',
+           params: { phone: phone, conversation_id: 'conv-1', agent_bot_id: 'bot-1', quote: { produto: 'Alternador Bosch' } },
+           headers: { 'X-Internal-Secret' => secret },
+           as: :json
+
+      allow_any_instance_of(Api::V1::Internal::PriceGateController).to receive(:trigger_resume)
+
+      post "/api/v1/internal/price_gate/release?internal_secret=#{secret}",
+           params: { id: 'conv-1', meta: { sender: { phone_number: "+#{phone}" } } },
+           as: :json
+
+      expect(response).to have_http_status(:ok)
+      body = JSON.parse(response.body)
+      expect(body['released']).to be(true)
+    end
+
+    it 'rejects release without a valid secret via header or query param' do
+      post '/api/v1/internal/price_gate/release', params: { phone: phone }, as: :json
+
+      expect(response).to have_http_status(:unauthorized)
+    end
   end
 end

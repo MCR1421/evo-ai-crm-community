@@ -2,7 +2,7 @@ class Api::V1::Internal::PriceGateController < ActionController::API
   before_action :verify_internal_secret
 
   def check
-    phone = params.require(:phone)
+    phone = params.require(:phone).delete('+')
     gate = PriceGateService.new(phone)
 
     if params[:quote].present? && !gate.released?
@@ -21,8 +21,14 @@ class Api::V1::Internal::PriceGateController < ActionController::API
   end
 
   def release
-    phone = params.require(:phone)
-    gate = PriceGateService.new(phone)
+    # Triggered either directly (phone param) or via the Automation Rule's
+    # generic send_webhook_event action, which POSTs Conversation#webhook_data
+    # (meta.sender.phone_number) with no way to pass a custom param — see
+    # docs/superpowers/plans/2026-07-31-vascaino-evoai-core-migration.md Task 10.
+    phone = params[:phone].presence || params.dig(:meta, :sender, :phone_number)
+    return render json: { error: 'phone is required' }, status: :bad_request if phone.blank?
+
+    gate = PriceGateService.new(phone.delete('+'))
 
     unless gate.pending_conversation_id
       return render json: { error: 'No pending price gate for this phone number' }, status: :not_found
@@ -59,7 +65,11 @@ class Api::V1::Internal::PriceGateController < ActionController::API
   end
 
   def verify_internal_secret
-    provided = request.headers['X-Internal-Secret']
+    # Header for direct calls (the Custom Tool, price_gate#check); query param
+    # for the Automation Rule's send_webhook_event, which is a generic
+    # WebhookJob POST that can't attach custom headers (see Task 10 in the
+    # migration plan) — so the release URL embeds ?internal_secret=... instead.
+    provided = request.headers['X-Internal-Secret'].presence || params[:internal_secret]
     expected = ENV.fetch('INTERNAL_TOOLS_SECRET')
 
     return if ActiveSupport::SecurityUtils.secure_compare(provided.to_s, expected)
