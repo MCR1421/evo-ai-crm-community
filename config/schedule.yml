@@ -40,6 +40,13 @@ agent_bots_inactivity_check_scheduler_job:
   queue: scheduled_jobs
   description: 'Check inactive conversations and process inactivity actions'
 
+# executed every minute to escalate unanswered LIBERAR price-gate requests to the next seller
+seller_escalation_check_pending_gates_job:
+  cron: '* * * * *'
+  class: 'SellerEscalation::CheckPendingGatesJob'
+  queue: scheduled_jobs
+  description: 'Escalate price-gate requests unanswered for 25+ minutes to the next seller (round-robin)'
+
 # executed daily at 2230 UTC
 # which is our lowest traffic time
 remove_stale_contact_inboxes_job.rb:
