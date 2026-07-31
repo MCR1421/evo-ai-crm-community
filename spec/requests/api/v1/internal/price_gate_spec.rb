@@ -1,0 +1,54 @@
+require 'rails_helper'
+
+RSpec.describe 'Api::V1::Internal::PriceGate', type: :request do
+  let(:phone) { '5522999990000' }
+  let(:secret) { 'test-secret' }
+
+  before do
+    allow(ENV).to receive(:fetch).and_call_original
+    allow(ENV).to receive(:fetch).with('INTERNAL_TOOLS_SECRET').and_return(secret)
+  end
+
+  after { Redis::Alfred.delete("price_gate:#{phone}") }
+
+  describe 'POST /api/v1/internal/price_gate/check' do
+    it 'rejects requests without the internal secret' do
+      post '/api/v1/internal/price_gate/check', params: { phone: phone }, as: :json
+
+      expect(response).to have_http_status(:unauthorized)
+    end
+
+    it 'registers the pending quote and returns released: false on first call' do
+      post '/api/v1/internal/price_gate/check',
+           params: { phone: phone, conversation_id: 'conv-1', agent_bot_id: 'bot-1', quote: { produto: 'Alternador Bosch' } },
+           headers: { 'X-Internal-Secret' => secret },
+           as: :json
+
+      expect(response).to have_http_status(:ok)
+      body = JSON.parse(response.body)
+      expect(body['released']).to be(false)
+    end
+  end
+
+  describe 'POST /api/v1/internal/price_gate/release' do
+    it 'returns released: true and clears escalation state' do
+      allow(SellerEscalationExecution).to receive(:reset_for_conversation)
+
+      post '/api/v1/internal/price_gate/check',
+           params: { phone: phone, conversation_id: 'conv-1', agent_bot_id: 'bot-1', quote: { produto: 'Alternador Bosch' } },
+           headers: { 'X-Internal-Secret' => secret },
+           as: :json
+
+      allow_any_instance_of(Api::V1::Internal::PriceGateController).to receive(:trigger_resume)
+
+      post '/api/v1/internal/price_gate/release',
+           params: { phone: phone },
+           headers: { 'X-Internal-Secret' => secret },
+           as: :json
+
+      expect(response).to have_http_status(:ok)
+      body = JSON.parse(response.body)
+      expect(body['released']).to be(true)
+    end
+  end
+end
