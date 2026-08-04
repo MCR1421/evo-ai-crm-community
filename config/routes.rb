@@ -674,6 +674,8 @@ Rails.application.routes.draw do
   post 'api/v1/internal/price_gate/check', to: 'api/v1/internal/price_gate#check'
   post 'api/v1/internal/price_gate/release', to: 'api/v1/internal/price_gate#release'
   get 'api/v1/internal/price_gate/release_link', to: 'api/v1/internal/price_gate#release_from_link'
+  get 'api/v1/internal/price_gate/release_form', to: 'api/v1/internal/price_gate#release_form'
+  post 'api/v1/internal/price_gate/release_form', to: 'api/v1/internal/price_gate#submit_release_form'
 
   namespace :twitter do
     resource :callback, only: [:show]

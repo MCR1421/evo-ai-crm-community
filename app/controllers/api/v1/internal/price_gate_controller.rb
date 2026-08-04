@@ -72,6 +72,29 @@ class Api::V1::Internal::PriceGateController < ActionController::API
     render_release_link_result(true, 'O cliente vai receber a mensagem com o preço em instantes.')
   end
 
+  # GET: shows the pending quote as an editable form (product selection,
+  # price, discount). Deliberately has NO side effects - state only
+  # changes on the POST below. A bare GET being safe to hit repeatedly
+  # (e.g. from a link-preview bot) is a real fix over the old
+  # release_from_link, which released the gate on GET.
+  def release_form
+    phone = params[:phone].presence
+    return render_release_link_result(false, 'Telefone não informado no link.') if phone.blank?
+
+    gate = PriceGateService.new(phone.delete('+'))
+    quote = gate.pending_quote
+    produtos = quote.is_a?(Hash) ? quote['produtos'] : nil
+
+    if produtos.blank?
+      return render_release_link_result(
+        false,
+        'Não há cotação pendente para esse cliente — já foi liberada antes ou expirou.'
+      )
+    end
+
+    render html: release_form_html(produtos, phone).html_safe, layout: false
+  end
+
   private
 
   def render_release_link_result(success, message)
@@ -106,6 +129,118 @@ class Api::V1::Internal::PriceGateController < ActionController::API
       </html>
     HTML
     render html: html.html_safe, layout: false
+  end
+
+  def format_brl(value)
+    ActiveSupport::NumberHelper.number_to_currency(value, unit: 'R$ ', separator: ',', delimiter: '.')
+  end
+
+  def release_form_html(produtos, phone, error: nil)
+    secret = ENV.fetch('INTERNAL_TOOLS_SECRET')
+    rows = produtos.each_with_index.map do |produto, index|
+      codigo = produto['codigo'].to_s
+      nome = produto['nome'].to_s
+      preco = produto['preco_venda']
+      custo = produto['preco_custo']
+      selected = produto.key?('selected') ? produto['selected'] : true
+      preco_str = preco.is_a?(Numeric) ? format('%.2f', preco) : ''
+      custo_html = custo.is_a?(Numeric) ? format_brl(custo) : '-'
+      estoque_html = produto['em_estoque'] ? '✅ Em estoque' : '⚠️ Sem estoque'
+
+      <<~ROW
+        <div class="product-row" data-tabela="#{preco_str}">
+          <label class="checkbox">
+            <input type="checkbox" name="products[#{index}][selected]" value="1" #{selected ? 'checked' : ''}>
+            <strong>#{ERB::Util.html_escape(nome)}</strong> (cód. #{ERB::Util.html_escape(codigo)})
+          </label>
+          <input type="hidden" name="products[#{index}][codigo]" value="#{ERB::Util.html_escape(codigo)}">
+          <input type="hidden" name="products[#{index}][nome]" value="#{ERB::Util.html_escape(nome)}">
+          <div class="row-fields">
+            <label>Preço final (R$)
+              <input type="number" step="0.01" min="0" class="preco-final" name="products[#{index}][preco_venda]" value="#{preco_str}">
+            </label>
+            <label>Desconto (%)
+              <input type="number" step="0.01" class="desconto-percent" value="0">
+            </label>
+            <label>Desconto (R$)
+              <input type="number" step="0.01" class="desconto-valor" value="0">
+            </label>
+            <span class="custo">Custo: #{custo_html}</span>
+            <span class="estoque">#{estoque_html}</span>
+          </div>
+        </div>
+      ROW
+    end.join
+
+    error_html = error ? "<p class=\"error\">⚠️ #{ERB::Util.html_escape(error)}</p>" : ''
+
+    <<~HTML
+      <!doctype html>
+      <html lang="pt-BR">
+        <head>
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1">
+          <title>Liberar preço</title>
+          <style>
+            body{font-family:-apple-system,system-ui,Segoe UI,Roboto,sans-serif;background:#0f172a;
+              color:#e2e8f0;margin:0;padding:24px}
+            .card{background:#1e293b;padding:24px;border-radius:16px;max-width:520px;margin:0 auto}
+            h1{font-size:19px;margin:0 0 16px}
+            .product-row{border-bottom:1px solid #334155;padding:12px 0}
+            .checkbox{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+            .row-fields{display:flex;flex-wrap:wrap;gap:12px;align-items:center;font-size:13px;color:#94a3b8}
+            .row-fields label{display:flex;flex-direction:column;gap:2px}
+            input[type=number]{background:#0f172a;border:1px solid #334155;color:#e2e8f0;
+              border-radius:6px;padding:6px;width:100px}
+            .custo{color:#64748b}
+            button{margin-top:16px;background:#22c55e;color:#0f172a;border:none;border-radius:8px;
+              padding:10px 20px;font-weight:600;cursor:pointer}
+            .error{color:#f59e0b}
+          </style>
+        </head>
+        <body>
+          <div class="card">
+            <h1>Escolha o que enviar pro cliente</h1>
+            #{error_html}
+            <form method="post" action="?phone=#{ERB::Util.url_encode(phone)}&internal_secret=#{ERB::Util.url_encode(secret)}">
+              #{rows}
+              <button type="submit">Enviar pro cliente</button>
+            </form>
+          </div>
+          <script>
+            document.querySelectorAll('.product-row').forEach(function (row) {
+              var tabela = parseFloat(row.dataset.tabela || '0');
+              var finalInput = row.querySelector('.preco-final');
+              var percentInput = row.querySelector('.desconto-percent');
+              var valorInput = row.querySelector('.desconto-valor');
+
+              function fromPercent() {
+                var pct = parseFloat(percentInput.value || '0');
+                var valor = tabela * pct / 100;
+                valorInput.value = valor.toFixed(2);
+                finalInput.value = (tabela - valor).toFixed(2);
+              }
+              function fromValor() {
+                var valor = parseFloat(valorInput.value || '0');
+                var pct = tabela ? (valor / tabela * 100) : 0;
+                percentInput.value = pct.toFixed(2);
+                finalInput.value = (tabela - valor).toFixed(2);
+              }
+              function fromFinal() {
+                var fin = parseFloat(finalInput.value || '0');
+                var valor = tabela - fin;
+                var pct = tabela ? (valor / tabela * 100) : 0;
+                percentInput.value = pct.toFixed(2);
+                valorInput.value = valor.toFixed(2);
+              }
+              percentInput.addEventListener('input', fromPercent);
+              valorInput.addEventListener('input', fromValor);
+              finalInput.addEventListener('input', fromFinal);
+            });
+          </script>
+        </body>
+      </html>
+    HTML
   end
 
   def trigger_resume(gate)

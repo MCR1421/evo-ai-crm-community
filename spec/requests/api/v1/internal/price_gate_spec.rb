@@ -76,4 +76,44 @@ RSpec.describe 'Api::V1::Internal::PriceGate', type: :request do
       expect(response).to have_http_status(:unauthorized)
     end
   end
+
+  describe 'GET /api/v1/internal/price_gate/release_form' do
+    it 'rejects requests without the internal secret' do
+      get '/api/v1/internal/price_gate/release_form', params: { phone: phone }
+
+      expect(response).to have_http_status(:unauthorized)
+    end
+
+    it 'shows a "no pending quote" message when there is nothing pending' do
+      get "/api/v1/internal/price_gate/release_form?internal_secret=#{secret}",
+          params: { phone: phone }
+
+      expect(response).to have_http_status(:ok)
+      expect(response.body).to include('Não há cotação pendente')
+    end
+
+    it 'renders the form with each product pre-filled from the pending quote' do
+      post '/api/v1/internal/price_gate/check',
+           params: {
+             phone: phone, conversation_id: 'conv-1', agent_bot_id: 'bot-1',
+             quote: {
+               produtos: [
+                 { nome: 'Alternador XPTO', codigo: '803097', em_estoque: true,
+                   preco_venda: 450.0, preco_custo: 245.0 }
+               ]
+             }
+           },
+           headers: { 'X-Internal-Secret' => secret },
+           as: :json
+
+      get "/api/v1/internal/price_gate/release_form?internal_secret=#{secret}",
+          params: { phone: phone }
+
+      expect(response).to have_http_status(:ok)
+      expect(response.body).to include('Alternador XPTO')
+      expect(response.body).to include('803097')
+      expect(response.body).to include('value="450.00"')
+      expect(response.body).to include('R$ 245,00')
+    end
+  end
 end
