@@ -43,7 +43,70 @@ class Api::V1::Internal::PriceGateController < ActionController::API
     render json: { released: true }, status: :ok
   end
 
+  # GET-friendly variant of #release, meant to be clicked directly from a
+  # link inside the private note the price-gate guardrail posts (see
+  # evo-ai-processor-community/src/services/adk/runners/standard_runner.py).
+  # A plain <a href> click is always a GET, so #release (POST-only, used by
+  # the "Liberar Preço" macro's Automation Rule webhook) can't be reused as
+  # the link target directly - same auth (X-Internal-Secret header or
+  # ?internal_secret= query param) applies via verify_internal_secret.
+  def release_from_link
+    phone = params[:phone].presence
+    return render_release_link_result(false, 'Telefone não informado no link.') if phone.blank?
+
+    gate = PriceGateService.new(phone.delete('+'))
+
+    unless gate.pending_conversation_id
+      return render_release_link_result(
+        false,
+        'Não há cotação pendente para esse cliente — já foi liberada antes ou expirou.'
+      )
+    end
+
+    gate.release!
+    conversation_id = gate.pending_conversation_id
+    trigger_resume(gate)
+    SellerEscalationExecution.reset_for_conversation(conversation_id)
+    gate.clear!
+
+    render_release_link_result(true, 'O cliente vai receber a mensagem com o preço em instantes.')
+  end
+
   private
+
+  def render_release_link_result(success, message)
+    icon = success ? '✅' : '⚠️'
+    title = success ? 'Preço liberado!' : 'Não foi possível liberar'
+    accent = success ? '#22c55e' : '#f59e0b'
+    html = <<~HTML
+      <!doctype html>
+      <html lang="pt-BR">
+        <head>
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1">
+          <title>#{title}</title>
+          <style>
+            body{font-family:-apple-system,system-ui,Segoe UI,Roboto,sans-serif;background:#0f172a;
+              color:#e2e8f0;display:flex;align-items:center;justify-content:center;min-height:100vh;
+              margin:0;padding:24px;text-align:center}
+            .card{background:#1e293b;padding:32px 28px;border-radius:16px;max-width:380px;
+              box-shadow:0 10px 30px rgba(0,0,0,.3)}
+            .icon{font-size:44px;margin-bottom:12px}
+            h1{font-size:19px;margin:0 0 10px;color:#{accent}}
+            p{color:#94a3b8;font-size:14px;line-height:1.5;margin:0}
+          </style>
+        </head>
+        <body>
+          <div class="card">
+            <div class="icon">#{icon}</div>
+            <h1>#{title}</h1>
+            <p>#{ERB::Util.html_escape(message)}</p>
+          </div>
+        </body>
+      </html>
+    HTML
+    render html: html.html_safe, layout: false
+  end
 
   def trigger_resume(gate)
     conversation = Conversation.find_by(id: gate.pending_conversation_id)

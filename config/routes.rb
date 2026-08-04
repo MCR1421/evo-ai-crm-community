@@ -673,6 +673,7 @@ Rails.application.routes.draw do
   # Internal price-gate endpoints (vascaino migration) — authenticated via X-Internal-Secret, not user auth
   post 'api/v1/internal/price_gate/check', to: 'api/v1/internal/price_gate#check'
   post 'api/v1/internal/price_gate/release', to: 'api/v1/internal/price_gate#release'
+  get 'api/v1/internal/price_gate/release_link', to: 'api/v1/internal/price_gate#release_from_link'
 
   namespace :twitter do
     resource :callback, only: [:show]
