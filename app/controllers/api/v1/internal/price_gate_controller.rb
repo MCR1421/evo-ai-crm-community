@@ -115,13 +115,17 @@ class Api::V1::Internal::PriceGateController < ActionController::API
     end
 
     products_params = params[:products].presence.try(:to_unsafe_h) || {}
-    selected_params = products_params.values.select { |p| p['selected'] == '1' }
+    selected_params = products_params.values.select { |p| %w[com_preco sem_preco].include?(p['modo']) }
 
     error = nil
     items = selected_params.map do |p|
-      price = parse_price(p['preco_venda'])
-      error ||= "Preço inválido para #{p['nome']}." if price.nil? || price <= 0
-      { nome: p['nome'], codigo: p['codigo'], preco: price }
+      if p['modo'] == 'com_preco'
+        price = parse_price(p['preco_venda'])
+        error ||= "Preço inválido para #{p['nome']}." if price.nil? || price <= 0
+        { nome: p['nome'], codigo: p['codigo'], com_preco: true, preco: price }
+      else
+        { nome: p['nome'], codigo: p['codigo'], com_preco: false, em_estoque: p['em_estoque'] == '1' }
+      end
     end
 
     if error
@@ -149,7 +153,7 @@ class Api::V1::Internal::PriceGateController < ActionController::API
 
     render_release_link_result(
       true,
-      items.any? ? 'Mensagem enviada ao cliente com os valores selecionados.' : 'Nenhum produto selecionado — nada foi enviado.'
+      items.any? ? 'Mensagem enviada ao cliente.' : 'Nenhum produto selecionado — nada foi enviado.'
     )
   end
 
@@ -220,8 +224,15 @@ class Api::V1::Internal::PriceGateController < ActionController::API
   end
 
   def build_price_message(items)
-    lines = items.map { |i| "- #{i[:nome]} (cód. #{i[:codigo]}): #{format_brl(i[:preco])}" }
-    "Segue os valores:\n#{lines.join("\n")}\n\nQualquer dúvida, fico à disposição!"
+    lines = items.map do |i|
+      if i[:com_preco]
+        "- #{i[:nome]} (cód. #{i[:codigo]}): #{format_brl(i[:preco])}"
+      else
+        status = i[:em_estoque] ? 'temos em estoque, vendedor vai te passar o valor' : 'no momento sem estoque, vou verificar prazo com o vendedor'
+        "- #{i[:nome]} (cód. #{i[:codigo]}): #{status}"
+      end
+    end
+    "Segue as informações:\n#{lines.join("\n")}\n\nQualquer dúvida, fico à disposição!"
   end
 
   def merge_submitted_products(produtos, products_params)
@@ -232,7 +243,7 @@ class Api::V1::Internal::PriceGateController < ActionController::API
 
       produto.merge(
         'preco_venda' => parse_price(submitted['preco_venda']) || produto['preco_venda'],
-        'selected' => submitted['selected'] == '1'
+        'modo' => submitted['modo']
       )
     end
   end
@@ -244,28 +255,32 @@ class Api::V1::Internal::PriceGateController < ActionController::API
       nome = produto['nome'].to_s
       preco = produto['preco_venda']
       custo = produto['preco_custo']
-      selected = produto.key?('selected') ? produto['selected'] : true
+      em_estoque = produto['em_estoque'] ? true : false
+      modo = produto['modo'].presence || 'com_preco'
       preco_str = preco.is_a?(Numeric) ? format('%.2f', preco) : ''
       custo_html = custo.is_a?(Numeric) ? format_brl(custo) : '-'
-      estoque_html = produto['em_estoque'] ? '✅ Em estoque' : '⚠️ Sem estoque'
+      estoque_html = em_estoque ? '✅ Em estoque' : '⚠️ Sem estoque'
 
       <<~ROW
         <div class="product-row" data-tabela="#{preco_str}">
-          <label class="checkbox">
-            <input type="checkbox" name="products[#{index}][selected]" value="1" #{selected ? 'checked' : ''}>
+          <div class="modo-group">
             <strong>#{ERB::Util.html_escape(nome)}</strong> (cód. #{ERB::Util.html_escape(codigo)})
-          </label>
+            <label><input type="radio" class="modo-radio" name="products[#{index}][modo]" value="com_preco" #{modo == 'com_preco' ? 'checked' : ''}> Com preço</label>
+            <label><input type="radio" class="modo-radio" name="products[#{index}][modo]" value="sem_preco" #{modo == 'sem_preco' ? 'checked' : ''}> Sem preço (só estoque)</label>
+            <label><input type="radio" class="modo-radio" name="products[#{index}][modo]" value="nao" #{modo == 'nao' ? 'checked' : ''}> Não enviar</label>
+          </div>
           <input type="hidden" name="products[#{index}][codigo]" value="#{ERB::Util.html_escape(codigo)}">
           <input type="hidden" name="products[#{index}][nome]" value="#{ERB::Util.html_escape(nome)}">
+          <input type="hidden" name="products[#{index}][em_estoque]" value="#{em_estoque ? '1' : '0'}">
           <div class="row-fields">
             <label>Preço final (R$)
-              <input type="number" step="0.01" min="0" class="preco-final" name="products[#{index}][preco_venda]" value="#{preco_str}">
+              <input type="number" step="0.01" min="0" class="preco-final" name="products[#{index}][preco_venda]" value="#{preco_str}" #{modo == 'com_preco' ? '' : 'disabled'}>
             </label>
             <label>Desconto (%)
-              <input type="number" step="0.01" class="desconto-percent" value="0">
+              <input type="number" step="0.01" class="desconto-percent" value="0" #{modo == 'com_preco' ? '' : 'disabled'}>
             </label>
             <label>Desconto (R$)
-              <input type="number" step="0.01" class="desconto-valor" value="0">
+              <input type="number" step="0.01" class="desconto-valor" value="0" #{modo == 'com_preco' ? '' : 'disabled'}>
             </label>
             <span class="custo">Custo: #{custo_html}</span>
             <span class="estoque">#{estoque_html}</span>
@@ -289,11 +304,13 @@ class Api::V1::Internal::PriceGateController < ActionController::API
             .card{background:#1e293b;padding:24px;border-radius:16px;max-width:520px;margin:0 auto}
             h1{font-size:19px;margin:0 0 16px}
             .product-row{border-bottom:1px solid #334155;padding:12px 0}
-            .checkbox{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+            .modo-group{display:flex;flex-wrap:wrap;align-items:center;gap:12px;margin-bottom:8px;font-size:13px}
+            .modo-group label{display:flex;align-items:center;gap:4px;font-weight:400}
             .row-fields{display:flex;flex-wrap:wrap;gap:12px;align-items:center;font-size:13px;color:#94a3b8}
             .row-fields label{display:flex;flex-direction:column;gap:2px}
             input[type=number]{background:#0f172a;border:1px solid #334155;color:#e2e8f0;
               border-radius:6px;padding:6px;width:100px}
+            input[type=number]:disabled{opacity:.4}
             .custo{color:#64748b}
             button{margin-top:16px;background:#22c55e;color:#0f172a;border:none;border-radius:8px;
               padding:10px 20px;font-weight:600;cursor:pointer}
@@ -315,6 +332,17 @@ class Api::V1::Internal::PriceGateController < ActionController::API
               var finalInput = row.querySelector('.preco-final');
               var percentInput = row.querySelector('.desconto-percent');
               var valorInput = row.querySelector('.desconto-valor');
+              var modoRadios = row.querySelectorAll('.modo-radio');
+
+              function syncModo() {
+                var comPreco = row.querySelector('.modo-radio:checked').value === 'com_preco';
+                finalInput.disabled = !comPreco;
+                percentInput.disabled = !comPreco;
+                valorInput.disabled = !comPreco;
+              }
+              modoRadios.forEach(function (radio) {
+                radio.addEventListener('change', syncModo);
+              });
 
               function fromPercent() {
                 var pct = parseFloat(percentInput.value || '0');

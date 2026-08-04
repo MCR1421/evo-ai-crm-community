@@ -179,18 +179,43 @@ RSpec.describe 'Api::V1::Internal::PriceGate', type: :request do
       creator = instance_double(AgentBots::MessageCreator)
       allow(AgentBots::MessageCreator).to receive(:new).with(agent_bot).and_return(creator)
       expect(creator).to receive(:create_bot_reply).with(
-        "Segue os valores:\n- Alternador XPTO (cód. 803097): R$ 450,00\n\nQualquer dúvida, fico à disposição!",
+        "Segue as informações:\n- Alternador XPTO (cód. 803097): R$ 450,00\n\nQualquer dúvida, fico à disposição!",
         conversation,
         force: true
       )
 
       post "/api/v1/internal/price_gate/release_form?internal_secret=#{secret}",
-           params: { phone: phone, products: { '0' => { selected: '1', codigo: '803097', nome: 'Alternador XPTO', preco_venda: '450.00' } } },
+           params: { phone: phone, products: { '0' => { modo: 'com_preco', codigo: '803097', nome: 'Alternador XPTO', preco_venda: '450.00' } } },
            as: :json
 
       expect(response).to have_http_status(:ok)
       expect(response.body).to include('Mensagem enviada')
       expect(PriceGateService.new(phone).released?).to be(false)
+      expect(PriceGateService.new(phone).pending_quote).to be_nil
+    end
+
+    it 'sends a stock-only message (no price) when the seller picks "sem preço"' do
+      allow(SellerEscalationExecution).to receive(:reset_for_conversation)
+      register_quote
+
+      conversation = instance_double(Conversation, id: 'conv-1')
+      agent_bot = instance_double(AgentBot)
+      allow(Conversation).to receive(:find_by).with(id: 'conv-1').and_return(conversation)
+      allow(AgentBot).to receive(:find_by).with(id: 'bot-1').and_return(agent_bot)
+      creator = instance_double(AgentBots::MessageCreator)
+      allow(AgentBots::MessageCreator).to receive(:new).with(agent_bot).and_return(creator)
+      expect(creator).to receive(:create_bot_reply).with(
+        "Segue as informações:\n- Alternador XPTO (cód. 803097): temos em estoque, vendedor vai te passar o valor\n\nQualquer dúvida, fico à disposição!",
+        conversation,
+        force: true
+      )
+
+      post "/api/v1/internal/price_gate/release_form?internal_secret=#{secret}",
+           params: { phone: phone, products: { '0' => { modo: 'sem_preco', codigo: '803097', nome: 'Alternador XPTO', em_estoque: '1', preco_venda: '450.00' } } },
+           as: :json
+
+      expect(response).to have_http_status(:ok)
+      expect(response.body).to include('Mensagem enviada')
       expect(PriceGateService.new(phone).pending_quote).to be_nil
     end
 
@@ -201,7 +226,7 @@ RSpec.describe 'Api::V1::Internal::PriceGate', type: :request do
       expect(AgentBots::MessageCreator).not_to receive(:new)
 
       post "/api/v1/internal/price_gate/release_form?internal_secret=#{secret}",
-           params: { phone: phone, products: { '0' => { selected: '0', codigo: '803097', nome: 'Alternador XPTO', preco_venda: '450.00' } } },
+           params: { phone: phone, products: { '0' => { modo: 'nao', codigo: '803097', nome: 'Alternador XPTO', preco_venda: '450.00' } } },
            as: :json
 
       expect(response).to have_http_status(:ok)
@@ -215,7 +240,7 @@ RSpec.describe 'Api::V1::Internal::PriceGate', type: :request do
       expect(AgentBots::MessageCreator).not_to receive(:new)
 
       post "/api/v1/internal/price_gate/release_form?internal_secret=#{secret}",
-           params: { phone: phone, products: { '0' => { selected: '1', codigo: '803097', nome: 'Alternador XPTO', preco_venda: '' } } },
+           params: { phone: phone, products: { '0' => { modo: 'com_preco', codigo: '803097', nome: 'Alternador XPTO', preco_venda: '' } } },
            as: :json
 
       expect(response).to have_http_status(:ok)
@@ -230,7 +255,7 @@ RSpec.describe 'Api::V1::Internal::PriceGate', type: :request do
       expect(AgentBots::MessageCreator).not_to receive(:new)
 
       post "/api/v1/internal/price_gate/release_form?internal_secret=#{secret}",
-           params: { phone: phone, products: { '0' => { selected: '1', codigo: '803097', nome: 'Alternador XPTO', preco_venda: '12abc' } } },
+           params: { phone: phone, products: { '0' => { modo: 'com_preco', codigo: '803097', nome: 'Alternador XPTO', preco_venda: '12abc' } } },
            as: :json
 
       expect(response).to have_http_status(:ok)
@@ -249,13 +274,13 @@ RSpec.describe 'Api::V1::Internal::PriceGate', type: :request do
       creator = instance_double(AgentBots::MessageCreator)
       allow(AgentBots::MessageCreator).to receive(:new).with(agent_bot).and_return(creator)
       expect(creator).to receive(:create_bot_reply).with(
-        "Segue os valores:\n- Alternador XPTO (cód. 803097): R$ 1.234,56\n\nQualquer dúvida, fico à disposição!",
+        "Segue as informações:\n- Alternador XPTO (cód. 803097): R$ 1.234,56\n\nQualquer dúvida, fico à disposição!",
         conversation,
         force: true
       )
 
       post "/api/v1/internal/price_gate/release_form?internal_secret=#{secret}",
-           params: { phone: phone, products: { '0' => { selected: '1', codigo: '803097', nome: 'Alternador XPTO', preco_venda: '1.234,56' } } },
+           params: { phone: phone, products: { '0' => { modo: 'com_preco', codigo: '803097', nome: 'Alternador XPTO', preco_venda: '1.234,56' } } },
            as: :json
 
       expect(response).to have_http_status(:ok)
