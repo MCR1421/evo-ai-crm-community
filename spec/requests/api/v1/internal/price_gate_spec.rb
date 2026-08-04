@@ -271,6 +271,60 @@ RSpec.describe 'Api::V1::Internal::PriceGate', type: :request do
       expect(response.body).to include('Mensagem enviada')
     end
 
+    it 'joins multiple selected products (mixed com_preco/sem_preco) with a blank line between blocks' do
+      allow(SellerEscalationExecution).to receive(:reset_for_conversation)
+      post '/api/v1/internal/price_gate/check',
+           params: {
+             phone: phone, conversation_id: 'conv-1', agent_bot_id: 'bot-1',
+             quote: {
+               produtos: [
+                 { nome: 'Alternador XPTO', codigo: '803097', em_estoque: true,
+                   preco_venda: 450.0, preco_custo: 245.0,
+                   marca: 'BOSCH', voltagem: '12V', amperagem: nil, medidas: [],
+                   shop_link: 'https://pr-distribuidora1.odoo.com/shop/product/22768' },
+                 { nome: '602100  EST. FORD CARGO, CORCEL, SANTANA 65A 14V WAPSA', codigo: '602100',
+                   em_estoque: false, preco_venda: 85.0, preco_custo: 42.0,
+                   marca: 'WAPSA', voltagem: '12V', amperagem: '65A', medidas: [],
+                   shop_link: 'https://pr-distribuidora1.odoo.com/shop/product/16273' }
+               ]
+             }
+           },
+           headers: { 'X-Internal-Secret' => secret },
+           as: :json
+
+      conversation = instance_double(Conversation, id: 'conv-1')
+      agent_bot = instance_double(AgentBot)
+      allow(Conversation).to receive(:find_by).with(id: 'conv-1').and_return(conversation)
+      allow(AgentBot).to receive(:find_by).with(id: 'bot-1').and_return(agent_bot)
+      creator = instance_double(AgentBots::MessageCreator)
+      allow(AgentBots::MessageCreator).to receive(:new).with(agent_bot).and_return(creator)
+      expect(creator).to receive(:create_bot_reply).with(
+        "🔧 803097\nAlternador XPTO\n💰 Preço: R$ 450,00 📦\nEstoque: Em estoque\n" \
+        "🏭 Marca: BOSCH\n🔌 Voltagem: 12V\n" \
+        "🛒 Ver no site (fotos e aplicação): https://pr-distribuidora1.odoo.com/shop/product/22768" \
+        "\n\n" \
+        "🔧 602100\n602100  EST. FORD CARGO, CORCEL, SANTANA 65A 14V WAPSA\nEstoque: Sem estoque\n" \
+        "🏭 Marca: WAPSA\n🔌 Voltagem: 12V\n⚡ Amperagem: 65A\n" \
+        "🛒 Ver no site (fotos e aplicação): https://pr-distribuidora1.odoo.com/shop/product/16273" \
+        "\n\nQualquer dúvida, fico à disposição!",
+        conversation,
+        force: true
+      )
+
+      post "/api/v1/internal/price_gate/release_form?internal_secret=#{secret}",
+           params: {
+             phone: phone,
+             products: {
+               '0' => { modo: 'com_preco', codigo: '803097', nome: 'Alternador XPTO', preco_venda: '450.00' },
+               '1' => { modo: 'sem_preco', codigo: '602100', nome: '602100  EST. FORD CARGO, CORCEL, SANTANA 65A 14V WAPSA' }
+             }
+           },
+           as: :json
+
+      expect(response).to have_http_status(:ok)
+      expect(response.body).to include('Mensagem enviada')
+    end
+
     it 'sends nothing and still clears the gate when no product is selected' do
       allow(SellerEscalationExecution).to receive(:reset_for_conversation)
       register_quote
