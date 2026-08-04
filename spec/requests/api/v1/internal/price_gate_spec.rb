@@ -146,7 +146,9 @@ RSpec.describe 'Api::V1::Internal::PriceGate', type: :request do
              quote: {
                produtos: [
                  { nome: 'Alternador XPTO', codigo: '803097', em_estoque: true,
-                   preco_venda: 450.0, preco_custo: 245.0 }
+                   preco_venda: 450.0, preco_custo: 245.0,
+                   marca: 'BOSCH', voltagem: '12V', amperagem: nil, medidas: [],
+                   shop_link: 'https://pr-distribuidora1.odoo.com/shop/product/22768' }
                ]
              }
            },
@@ -179,7 +181,10 @@ RSpec.describe 'Api::V1::Internal::PriceGate', type: :request do
       creator = instance_double(AgentBots::MessageCreator)
       allow(AgentBots::MessageCreator).to receive(:new).with(agent_bot).and_return(creator)
       expect(creator).to receive(:create_bot_reply).with(
-        "Segue as informações:\n- Alternador XPTO (cód. 803097): R$ 450,00\n\nQualquer dúvida, fico à disposição!",
+        "🔧 803097\nAlternador XPTO\n💰 Preço: R$ 450,00 📦\nEstoque: Em estoque\n" \
+        "🏭 Marca: BOSCH\n🔌 Voltagem: 12V\n" \
+        "🛒 Ver no site (fotos e aplicação): https://pr-distribuidora1.odoo.com/shop/product/22768" \
+        "\n\nQualquer dúvida, fico à disposição!",
         conversation,
         force: true
       )
@@ -194,7 +199,7 @@ RSpec.describe 'Api::V1::Internal::PriceGate', type: :request do
       expect(PriceGateService.new(phone).pending_quote).to be_nil
     end
 
-    it 'sends a stock-only message (no price) when the seller picks "sem preço"' do
+    it 'sends a stock-only message (no price, no cost, no exact quantity) when the seller picks "sem preço"' do
       allow(SellerEscalationExecution).to receive(:reset_for_conversation)
       register_quote
 
@@ -205,18 +210,65 @@ RSpec.describe 'Api::V1::Internal::PriceGate', type: :request do
       creator = instance_double(AgentBots::MessageCreator)
       allow(AgentBots::MessageCreator).to receive(:new).with(agent_bot).and_return(creator)
       expect(creator).to receive(:create_bot_reply).with(
-        "Segue as informações:\n- Alternador XPTO (cód. 803097): temos em estoque, vendedor vai te passar o valor\n\nQualquer dúvida, fico à disposição!",
+        "🔧 803097\nAlternador XPTO\nEstoque: Em estoque\n" \
+        "🏭 Marca: BOSCH\n🔌 Voltagem: 12V\n" \
+        "🛒 Ver no site (fotos e aplicação): https://pr-distribuidora1.odoo.com/shop/product/22768" \
+        "\n\nQualquer dúvida, fico à disposição!",
         conversation,
         force: true
       )
 
       post "/api/v1/internal/price_gate/release_form?internal_secret=#{secret}",
-           params: { phone: phone, products: { '0' => { modo: 'sem_preco', codigo: '803097', nome: 'Alternador XPTO', em_estoque: '1', preco_venda: '450.00' } } },
+           params: { phone: phone, products: { '0' => { modo: 'sem_preco', codigo: '803097', nome: 'Alternador XPTO', preco_venda: '450.00' } } },
            as: :json
 
       expect(response).to have_http_status(:ok)
       expect(response.body).to include('Mensagem enviada')
+      expect(response.body).not_to include('450')
+      expect(response.body).not_to include('245')
       expect(PriceGateService.new(phone).pending_quote).to be_nil
+    end
+
+    it 'includes Amperagem and Medidas when present, and never includes cost price' do
+      allow(SellerEscalationExecution).to receive(:reset_for_conversation)
+      post '/api/v1/internal/price_gate/check',
+           params: {
+             phone: phone, conversation_id: 'conv-1', agent_bot_id: 'bot-1',
+             quote: {
+               produtos: [
+                 { nome: '602100  EST. FORD CARGO, CORCEL, SANTANA 65A 14V WAPSA', codigo: '602100',
+                   em_estoque: true, preco_venda: 85.0, preco_custo: 42.0,
+                   marca: 'WAPSA', voltagem: '12V', amperagem: '65A',
+                   medidas: [['Diâmetro Externo', '127mm'], ['Pacote', '24,5mm']],
+                   shop_link: 'https://pr-distribuidora1.odoo.com/shop/product/16273' }
+               ]
+             }
+           },
+           headers: { 'X-Internal-Secret' => secret },
+           as: :json
+
+      conversation = instance_double(Conversation, id: 'conv-1')
+      agent_bot = instance_double(AgentBot)
+      allow(Conversation).to receive(:find_by).with(id: 'conv-1').and_return(conversation)
+      allow(AgentBot).to receive(:find_by).with(id: 'bot-1').and_return(agent_bot)
+      creator = instance_double(AgentBots::MessageCreator)
+      allow(AgentBots::MessageCreator).to receive(:new).with(agent_bot).and_return(creator)
+      expect(creator).to receive(:create_bot_reply).with(
+        "🔧 602100\n602100  EST. FORD CARGO, CORCEL, SANTANA 65A 14V WAPSA\n" \
+        "💰 Preço: R$ 85,00 📦\nEstoque: Em estoque\n🏭 Marca: WAPSA\n🔌 Voltagem: 12V\n" \
+        "⚡ Amperagem: 65A\n📏 Medidas:\n   • Diâmetro Externo: 127mm\n   • Pacote: 24,5mm\n" \
+        "🛒 Ver no site (fotos e aplicação): https://pr-distribuidora1.odoo.com/shop/product/16273" \
+        "\n\nQualquer dúvida, fico à disposição!",
+        conversation,
+        force: true
+      )
+
+      post "/api/v1/internal/price_gate/release_form?internal_secret=#{secret}",
+           params: { phone: phone, products: { '0' => { modo: 'com_preco', codigo: '602100', nome: '602100  EST. FORD CARGO, CORCEL, SANTANA 65A 14V WAPSA', preco_venda: '85.00' } } },
+           as: :json
+
+      expect(response).to have_http_status(:ok)
+      expect(response.body).to include('Mensagem enviada')
     end
 
     it 'sends nothing and still clears the gate when no product is selected' do
@@ -274,7 +326,10 @@ RSpec.describe 'Api::V1::Internal::PriceGate', type: :request do
       creator = instance_double(AgentBots::MessageCreator)
       allow(AgentBots::MessageCreator).to receive(:new).with(agent_bot).and_return(creator)
       expect(creator).to receive(:create_bot_reply).with(
-        "Segue as informações:\n- Alternador XPTO (cód. 803097): R$ 1.234,56\n\nQualquer dúvida, fico à disposição!",
+        "🔧 803097\nAlternador XPTO\n💰 Preço: R$ 1.234,56 📦\nEstoque: Em estoque\n" \
+        "🏭 Marca: BOSCH\n🔌 Voltagem: 12V\n" \
+        "🛒 Ver no site (fotos e aplicação): https://pr-distribuidora1.odoo.com/shop/product/22768" \
+        "\n\nQualquer dúvida, fico à disposição!",
         conversation,
         force: true
       )

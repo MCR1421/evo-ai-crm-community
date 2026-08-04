@@ -116,15 +116,33 @@ class Api::V1::Internal::PriceGateController < ActionController::API
 
     products_params = params[:products].presence.try(:to_unsafe_h) || {}
     selected_params = products_params.values.select { |p| %w[com_preco sem_preco].include?(p['modo']) }
+    produtos_by_codigo = produtos.index_by { |produto| produto['codigo'] }
 
     error = nil
     items = selected_params.map do |p|
+      # nome/codigo come from the seller-submitted hidden fields (they're
+      # just labels, seller can't influence anything sensitive by editing
+      # them); everything else - stock status, brand/spec attributes, the
+      # public shop link - is read straight back out of the stored quote
+      # by codigo, never trusted from the form, since none of it is
+      # meant to be seller-editable.
+      original = produtos_by_codigo[p['codigo']] || {}
+      item = {
+        nome: p['nome'],
+        codigo: p['codigo'],
+        em_estoque: original['em_estoque'] ? true : false,
+        marca: original['marca'],
+        voltagem: original['voltagem'],
+        amperagem: original['amperagem'],
+        medidas: original['medidas'] || [],
+        shop_link: original['shop_link'],
+      }
       if p['modo'] == 'com_preco'
         price = parse_price(p['preco_venda'])
         error ||= "Preço inválido para #{p['nome']}." if price.nil? || price <= 0
-        { nome: p['nome'], codigo: p['codigo'], com_preco: true, preco: price }
+        item.merge(com_preco: true, preco: price)
       else
-        { nome: p['nome'], codigo: p['codigo'], com_preco: false, em_estoque: p['em_estoque'] == '1' }
+        item.merge(com_preco: false)
       end
     end
 
@@ -224,15 +242,29 @@ class Api::V1::Internal::PriceGateController < ActionController::API
   end
 
   def build_price_message(items)
-    lines = items.map do |i|
-      if i[:com_preco]
-        "- #{i[:nome]} (cód. #{i[:codigo]}): #{format_brl(i[:preco])}"
-      else
-        status = i[:em_estoque] ? 'temos em estoque, vendedor vai te passar o valor' : 'no momento sem estoque, vou verificar prazo com o vendedor'
-        "- #{i[:nome]} (cód. #{i[:codigo]}): #{status}"
-      end
+    blocks = items.map { |i| build_price_message_item(i) }
+    "#{blocks.join("\n\n")}\n\nQualquer dúvida, fico à disposição!"
+  end
+
+  # Mirrors an existing message format the seller already uses by hand
+  # (screenshot, 2026-08-04) - name/code/brand/spec-attribute layout with
+  # emoji labels. Never includes preco_custo (cost) or exact stock
+  # quantity - only a yes/no - even in "com preço" mode; only the fields
+  # actually present for a given product are shown (e.g. Medidas only
+  # exists for measurable parts like estatores/rotores/induzidos).
+  def build_price_message_item(item)
+    lines = ["🔧 #{item[:codigo]}", item[:nome]]
+    lines << "💰 Preço: #{format_brl(item[:preco])} 📦" if item[:com_preco]
+    lines << "Estoque: #{item[:em_estoque] ? 'Em estoque' : 'Sem estoque'}"
+    lines << "🏭 Marca: #{item[:marca]}" if item[:marca].present?
+    lines << "🔌 Voltagem: #{item[:voltagem]}" if item[:voltagem].present?
+    lines << "⚡ Amperagem: #{item[:amperagem]}" if item[:amperagem].present?
+    if item[:medidas].present?
+      lines << '📏 Medidas:'
+      item[:medidas].each { |label, value| lines << "   • #{label}: #{value}" }
     end
-    "Segue as informações:\n#{lines.join("\n")}\n\nQualquer dúvida, fico à disposição!"
+    lines << "🛒 Ver no site (fotos e aplicação): #{item[:shop_link]}" if item[:shop_link].present?
+    lines.join("\n")
   end
 
   def merge_submitted_products(produtos, products_params)
@@ -271,7 +303,6 @@ class Api::V1::Internal::PriceGateController < ActionController::API
           </div>
           <input type="hidden" name="products[#{index}][codigo]" value="#{ERB::Util.html_escape(codigo)}">
           <input type="hidden" name="products[#{index}][nome]" value="#{ERB::Util.html_escape(nome)}">
-          <input type="hidden" name="products[#{index}][em_estoque]" value="#{em_estoque ? '1' : '0'}">
           <div class="row-fields">
             <label>Preço final (R$)
               <input type="number" step="0.01" min="0" class="preco-final" name="products[#{index}][preco_venda]" value="#{preco_str}" #{modo == 'com_preco' ? '' : 'disabled'}>
