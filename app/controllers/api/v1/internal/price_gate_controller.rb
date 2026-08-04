@@ -95,6 +95,64 @@ class Api::V1::Internal::PriceGateController < ActionController::API
     render html: release_form_html(produtos, phone).html_safe, layout: false
   end
 
+  # POST: seller confirms which products/prices to send. Builds the final
+  # message from exactly what was submitted and posts it straight to the
+  # conversation - the bot/LLM never composes or sees this message, so
+  # what the seller saw on the form is exactly what the customer gets.
+  def submit_release_form
+    phone = params[:phone].presence
+    return render_release_link_result(false, 'Telefone não informado no link.') if phone.blank?
+
+    gate = PriceGateService.new(phone.delete('+'))
+    quote = gate.pending_quote
+    produtos = quote.is_a?(Hash) ? quote['produtos'] : nil
+
+    if produtos.blank?
+      return render_release_link_result(
+        false,
+        'Não há cotação pendente para esse cliente — já foi liberada antes ou expirou.'
+      )
+    end
+
+    products_params = params[:products].presence.try(:to_unsafe_h) || {}
+    selected_params = products_params.values.select { |p| p['selected'] == '1' }
+
+    error = nil
+    items = selected_params.map do |p|
+      price = p['preco_venda'].presence&.tr(',', '.')&.to_f
+      error ||= "Preço inválido para #{p['nome']}." if price.nil? || price <= 0
+      { nome: p['nome'], codigo: p['codigo'], preco: price }
+    end
+
+    if error
+      merged = merge_submitted_products(produtos, products_params)
+      return render html: release_form_html(merged, phone, error: error).html_safe, layout: false
+    end
+
+    conversation = Conversation.find_by(id: gate.pending_conversation_id)
+    agent_bot = AgentBot.find_by(id: gate.pending_agent_bot_id)
+
+    if items.any?
+      unless conversation && agent_bot
+        return render_release_link_result(
+          false, 'Conversa ou bot não encontrado — a cotação pode ter expirado.'
+        )
+      end
+      AgentBots::MessageCreator.new(agent_bot).create_bot_reply(
+        build_price_message(items), conversation, force: true
+      )
+    end
+
+    gate.release!
+    SellerEscalationExecution.reset_for_conversation(gate.pending_conversation_id)
+    gate.clear!
+
+    render_release_link_result(
+      true,
+      items.any? ? 'Mensagem enviada ao cliente com os valores selecionados.' : 'Nenhum produto selecionado — nada foi enviado.'
+    )
+  end
+
   private
 
   def render_release_link_result(success, message)
@@ -133,6 +191,24 @@ class Api::V1::Internal::PriceGateController < ActionController::API
 
   def format_brl(value)
     ActiveSupport::NumberHelper.number_to_currency(value, unit: 'R$ ', separator: ',', delimiter: '.')
+  end
+
+  def build_price_message(items)
+    lines = items.map { |i| "- #{i[:nome]} (cód. #{i[:codigo]}): #{format_brl(i[:preco])}" }
+    "Segue os valores:\n#{lines.join("\n")}\n\nQualquer dúvida, fico à disposição!"
+  end
+
+  def merge_submitted_products(produtos, products_params)
+    by_codigo = products_params.values.index_by { |p| p['codigo'] }
+    produtos.map do |produto|
+      submitted = by_codigo[produto['codigo']]
+      next produto unless submitted
+
+      produto.merge(
+        'preco_venda' => submitted['preco_venda'].presence&.tr(',', '.')&.to_f || produto['preco_venda'],
+        'selected' => submitted['selected'] == '1'
+      )
+    end
   end
 
   def release_form_html(produtos, phone, error: nil)

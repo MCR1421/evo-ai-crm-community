@@ -116,4 +116,91 @@ RSpec.describe 'Api::V1::Internal::PriceGate', type: :request do
       expect(response.body).to include('R$ 245,00')
     end
   end
+
+  describe 'POST /api/v1/internal/price_gate/release_form' do
+    def register_quote
+      post '/api/v1/internal/price_gate/check',
+           params: {
+             phone: phone, conversation_id: 'conv-1', agent_bot_id: 'bot-1',
+             quote: {
+               produtos: [
+                 { nome: 'Alternador XPTO', codigo: '803097', em_estoque: true,
+                   preco_venda: 450.0, preco_custo: 245.0 }
+               ]
+             }
+           },
+           headers: { 'X-Internal-Secret' => secret },
+           as: :json
+    end
+
+    it 'rejects requests without the internal secret' do
+      post '/api/v1/internal/price_gate/release_form', params: { phone: phone, products: {} }
+
+      expect(response).to have_http_status(:unauthorized)
+    end
+
+    it 'shows a "no pending quote" message when there is nothing pending' do
+      post "/api/v1/internal/price_gate/release_form?internal_secret=#{secret}",
+           params: { phone: phone, products: {} }, as: :json
+
+      expect(response).to have_http_status(:ok)
+      expect(response.body).to include('Não há cotação pendente')
+    end
+
+    it 'sends the chosen price to the customer and clears the gate' do
+      allow(SellerEscalationExecution).to receive(:reset_for_conversation)
+      register_quote
+
+      conversation = instance_double(Conversation, id: 'conv-1')
+      agent_bot = instance_double(AgentBot)
+      allow(Conversation).to receive(:find_by).with(id: 'conv-1').and_return(conversation)
+      allow(AgentBot).to receive(:find_by).with(id: 'bot-1').and_return(agent_bot)
+      creator = instance_double(AgentBots::MessageCreator)
+      allow(AgentBots::MessageCreator).to receive(:new).with(agent_bot).and_return(creator)
+      expect(creator).to receive(:create_bot_reply).with(
+        "Segue os valores:\n- Alternador XPTO (cód. 803097): R$ 450,00\n\nQualquer dúvida, fico à disposição!",
+        conversation,
+        force: true
+      )
+
+      post "/api/v1/internal/price_gate/release_form?internal_secret=#{secret}",
+           params: { phone: phone, products: { '0' => { selected: '1', codigo: '803097', nome: 'Alternador XPTO', preco_venda: '450.00' } } },
+           as: :json
+
+      expect(response).to have_http_status(:ok)
+      expect(response.body).to include('Mensagem enviada')
+      expect(PriceGateService.new(phone).released?).to be(false)
+      expect(PriceGateService.new(phone).pending_quote).to be_nil
+    end
+
+    it 'sends nothing and still clears the gate when no product is selected' do
+      allow(SellerEscalationExecution).to receive(:reset_for_conversation)
+      register_quote
+
+      expect(AgentBots::MessageCreator).not_to receive(:new)
+
+      post "/api/v1/internal/price_gate/release_form?internal_secret=#{secret}",
+           params: { phone: phone, products: { '0' => { selected: '0', codigo: '803097', nome: 'Alternador XPTO', preco_venda: '450.00' } } },
+           as: :json
+
+      expect(response).to have_http_status(:ok)
+      expect(response.body).to include('Nenhum produto selecionado')
+      expect(PriceGateService.new(phone).pending_quote).to be_nil
+    end
+
+    it 're-renders the form with the error and keeps the quote pending when the price is invalid' do
+      register_quote
+
+      expect(AgentBots::MessageCreator).not_to receive(:new)
+
+      post "/api/v1/internal/price_gate/release_form?internal_secret=#{secret}",
+           params: { phone: phone, products: { '0' => { selected: '1', codigo: '803097', nome: 'Alternador XPTO', preco_venda: '' } } },
+           as: :json
+
+      expect(response).to have_http_status(:ok)
+      expect(response.body).to include('Preço inválido')
+      expect(response.body).to include('Alternador XPTO')
+      expect(PriceGateService.new(phone).pending_quote).not_to be_nil
+    end
+  end
 end
