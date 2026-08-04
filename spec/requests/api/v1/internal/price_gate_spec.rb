@@ -115,6 +115,27 @@ RSpec.describe 'Api::V1::Internal::PriceGate', type: :request do
       expect(response.body).to include('value="450.00"')
       expect(response.body).to include('R$ 245,00')
     end
+
+    it 'has no side effects - the pending quote survives the GET' do
+      post '/api/v1/internal/price_gate/check',
+           params: {
+             phone: phone, conversation_id: 'conv-1', agent_bot_id: 'bot-1',
+             quote: {
+               produtos: [
+                 { nome: 'Alternador XPTO', codigo: '803097', em_estoque: true,
+                   preco_venda: 450.0, preco_custo: 245.0 }
+               ]
+             }
+           },
+           headers: { 'X-Internal-Secret' => secret },
+           as: :json
+
+      get "/api/v1/internal/price_gate/release_form?internal_secret=#{secret}",
+          params: { phone: phone }
+
+      expect(response).to have_http_status(:ok)
+      expect(PriceGateService.new(phone).pending_quote).not_to be_nil
+    end
   end
 
   describe 'POST /api/v1/internal/price_gate/release_form' do
