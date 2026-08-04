@@ -119,7 +119,7 @@ class Api::V1::Internal::PriceGateController < ActionController::API
 
     error = nil
     items = selected_params.map do |p|
-      price = p['preco_venda'].presence&.tr(',', '.')&.to_f
+      price = parse_price(p['preco_venda'])
       error ||= "Preço inválido para #{p['nome']}." if price.nil? || price <= 0
       { nome: p['nome'], codigo: p['codigo'], preco: price }
     end
@@ -193,6 +193,32 @@ class Api::V1::Internal::PriceGateController < ActionController::API
     ActiveSupport::NumberHelper.number_to_currency(value, unit: 'R$ ', separator: ',', delimiter: '.')
   end
 
+  PRICE_BR_PATTERN = /\A\d+(\.\d{3})*,\d{1,2}\z/
+  PRICE_PLAIN_PATTERN = /\A\d+(\.\d{1,2})?\z/
+
+  # Only accepts two well-defined formats - a plain decimal (what the
+  # HTML number input sends) or a pt-BR grouped decimal (e.g. "1.234,56")
+  # - and rejects everything else, including strings with a numeric
+  # prefix followed by garbage (String#to_f would silently truncate
+  # those, e.g. "12abc".to_f == 12.0).
+  def parse_price(raw)
+    return nil if raw.blank?
+
+    normalized = raw.to_s.strip
+    case normalized
+    when PRICE_BR_PATTERN
+      normalized = normalized.delete('.').tr(',', '.')
+    when PRICE_PLAIN_PATTERN
+      # already a plain decimal (e.g. from the HTML number input) - use as-is
+    else
+      return nil
+    end
+
+    Float(normalized)
+  rescue ArgumentError, TypeError
+    nil
+  end
+
   def build_price_message(items)
     lines = items.map { |i| "- #{i[:nome]} (cód. #{i[:codigo]}): #{format_brl(i[:preco])}" }
     "Segue os valores:\n#{lines.join("\n")}\n\nQualquer dúvida, fico à disposição!"
@@ -205,7 +231,7 @@ class Api::V1::Internal::PriceGateController < ActionController::API
       next produto unless submitted
 
       produto.merge(
-        'preco_venda' => submitted['preco_venda'].presence&.tr(',', '.')&.to_f || produto['preco_venda'],
+        'preco_venda' => parse_price(submitted['preco_venda']) || produto['preco_venda'],
         'selected' => submitted['selected'] == '1'
       )
     end

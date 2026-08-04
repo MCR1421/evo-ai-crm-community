@@ -202,5 +202,43 @@ RSpec.describe 'Api::V1::Internal::PriceGate', type: :request do
       expect(response.body).to include('Alternador XPTO')
       expect(PriceGateService.new(phone).pending_quote).not_to be_nil
     end
+
+    it 'rejects a price with a numeric prefix followed by garbage' do
+      register_quote
+
+      expect(AgentBots::MessageCreator).not_to receive(:new)
+
+      post "/api/v1/internal/price_gate/release_form?internal_secret=#{secret}",
+           params: { phone: phone, products: { '0' => { selected: '1', codigo: '803097', nome: 'Alternador XPTO', preco_venda: '12abc' } } },
+           as: :json
+
+      expect(response).to have_http_status(:ok)
+      expect(response.body).to include('Preço inválido')
+      expect(PriceGateService.new(phone).pending_quote).not_to be_nil
+    end
+
+    it 'accepts a pt-BR grouped-decimal price and sends the correct (uncorrupted) value to the customer' do
+      allow(SellerEscalationExecution).to receive(:reset_for_conversation)
+      register_quote
+
+      conversation = instance_double(Conversation, id: 'conv-1')
+      agent_bot = instance_double(AgentBot)
+      allow(Conversation).to receive(:find_by).with(id: 'conv-1').and_return(conversation)
+      allow(AgentBot).to receive(:find_by).with(id: 'bot-1').and_return(agent_bot)
+      creator = instance_double(AgentBots::MessageCreator)
+      allow(AgentBots::MessageCreator).to receive(:new).with(agent_bot).and_return(creator)
+      expect(creator).to receive(:create_bot_reply).with(
+        "Segue os valores:\n- Alternador XPTO (cód. 803097): R$ 1.234,56\n\nQualquer dúvida, fico à disposição!",
+        conversation,
+        force: true
+      )
+
+      post "/api/v1/internal/price_gate/release_form?internal_secret=#{secret}",
+           params: { phone: phone, products: { '0' => { selected: '1', codigo: '803097', nome: 'Alternador XPTO', preco_venda: '1.234,56' } } },
+           as: :json
+
+      expect(response).to have_http_status(:ok)
+      expect(response.body).to include('Mensagem enviada')
+    end
   end
 end
