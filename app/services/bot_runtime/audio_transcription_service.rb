@@ -10,6 +10,20 @@ module BotRuntime
     GROQ_URL = 'https://api.groq.com/openai/v1/audio/transcriptions'
     TIMEOUT = 30
 
+    # Whisper's optional `prompt` param biases transcription toward this
+    # vocabulary without constraining it - it's context, not a hard list.
+    # Added 2026-08-05 after real incidents where short/unclear audio got
+    # transcribed as an unrelated word ("Instator"/"Presidência" instead of
+    # "Estator"/customer's actual request) - the shop only sells starter
+    # motors and alternators (see the agent's own instruction), so biasing
+    # toward that vocabulary should reduce (not guaranteed to eliminate,
+    # Whisper hallucination is model-level noise) mis-hearing this kind of
+    # audio as an unrelated word.
+    CATALOG_PROMPT = 'Peças automotivas: alternador, motor de partida, ' \
+                      'arranque, estator, rotor, induzido, regulador, ' \
+                      'polia, bendix, solenoide, automático, presidente. ' \
+                      'Marcas: Bosch, Valeo, Denso, Magneti Marelli, Hitachi.'
+
     EXTENSION_BY_CONTENT_TYPE = {
       'audio/ogg' => '.ogg',
       'audio/opus' => '.ogg',
@@ -61,7 +75,8 @@ module BotRuntime
         'file' => upload,
         'model' => 'whisper-large-v3',
         'language' => 'pt',
-        'response_format' => 'json'
+        'response_format' => 'json',
+        'prompt' => CATALOG_PROMPT
       )
       request['Authorization'] = "Bearer #{ENV.fetch('GROQ_API_KEY', nil)}"
 

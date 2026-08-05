@@ -30,6 +30,22 @@ RSpec.describe BotRuntime::AudioTranscriptionService do
       expect(result).to eq('quanto custa o alternador do gol g5')
     end
 
+    it 'sends a catalog-vocabulary prompt to bias Whisper against unrelated-word transcriptions' do
+      # WebMock can't match multipart bodies via the `body:` option, so a
+      # custom `with { |request| ... }` block inspects the raw body itself.
+      stub_request(:post, groq_endpoint)
+        .with { |request| request.body.include?('name="prompt"') && request.body.include?('alternador') }
+        .to_return(
+          status: 200,
+          body: { text: 'estator do ecosport' }.to_json,
+          headers: { 'Content-Type' => 'application/json' }
+        )
+
+      result = described_class.new(attachment).call
+
+      expect(result).to eq('estator do ecosport')
+    end
+
     it 'raises TranscriptionError when the download fails' do
       allow(file).to receive(:download).and_raise(ActiveStorage::FileNotFoundError, 'not found')
 
