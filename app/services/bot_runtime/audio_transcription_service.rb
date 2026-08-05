@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 require 'net/http/post/multipart'
-require 'down'
+require 'tempfile'
 
 module BotRuntime
   class AudioTranscriptionService
@@ -18,30 +18,43 @@ module BotRuntime
       'audio/wav' => '.wav'
     }.freeze
 
-    def initialize(audio_file_url, content_type = nil)
-      @audio_file_url = audio_file_url
-      @content_type = content_type
+    def initialize(attachment)
+      @attachment = attachment
     end
 
     def call
       tempfile = download_audio
       transcribe(tempfile)
     ensure
-      tempfile&.close
+      tempfile&.close!
     end
 
     private
 
+    # Downloads directly from ActiveStorage rather than via attachment.file_url:
+    # that URL is generated for a human clicking it in a browser (localhost:3020,
+    # the host-mapped port) and isn't reachable from inside a Sidekiq container.
     def download_audio
-      Down.download(@audio_file_url)
-    rescue Down::Error => e
+      tempfile = Tempfile.new(['audio', content_type_extension])
+      tempfile.binmode
+      @attachment.file.download { |chunk| tempfile.write(chunk) }
+      tempfile.rewind
+      tempfile
+    rescue StandardError => e
       raise TranscriptionError, "download failed: #{e.message}"
+    end
+
+    def content_type
+      @attachment.file.content_type
+    end
+
+    def content_type_extension
+      EXTENSION_BY_CONTENT_TYPE.fetch(content_type, '.ogg')
     end
 
     def transcribe(tempfile)
       uri = URI.parse(GROQ_URL)
-      extension = EXTENSION_BY_CONTENT_TYPE.fetch(@content_type, '.ogg')
-      upload = UploadIO.new(tempfile, @content_type || 'audio/ogg', "audio#{extension}")
+      upload = UploadIO.new(tempfile, content_type || 'audio/ogg', "audio#{content_type_extension}")
 
       request = Net::HTTP::Post::Multipart.new(
         uri.path,

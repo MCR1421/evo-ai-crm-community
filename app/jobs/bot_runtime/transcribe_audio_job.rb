@@ -6,8 +6,8 @@ module BotRuntime
 
     FALLBACK_TEXT = 'Não consegui entender o áudio, você pode escrever a mensagem?'
 
-    def perform(event, audio_file_url, content_type, agent_bot, conversation)
-      transcript = AudioTranscriptionService.new(audio_file_url, content_type).call
+    def perform(event, attachment, agent_bot, conversation)
+      transcript = AudioTranscriptionService.new(attachment).call
 
       event[:message_content] = transcript
       SendEventJob.perform_later(event)

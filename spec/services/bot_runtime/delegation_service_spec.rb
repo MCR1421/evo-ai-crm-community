@@ -44,10 +44,10 @@ RSpec.describe BotRuntime::DelegationService do
 
       it 'enqueues TranscribeAudioJob instead of SendEventJob' do
         expect(BotRuntime::SendEventJob).not_to receive(:perform_later)
-        expect(BotRuntime::TranscribeAudioJob).to receive(:perform_later) do |event, url, content_type, bot, conv|
+        expect(BotRuntime::TranscribeAudioJob).to receive(:perform_later) do |event, attachment, bot, conv|
           expect(event[:conversation_id]).to eq(conversation.display_id)
-          expect(url).to be_present
-          expect(content_type).to eq('audio/ogg')
+          expect(attachment).to eq(message.attachments.first)
+          expect(attachment.file.content_type).to eq('audio/ogg')
           expect(bot).to eq(agent_bot)
           expect(conv).to eq(conversation)
         end

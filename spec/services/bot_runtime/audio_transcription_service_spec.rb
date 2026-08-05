@@ -4,22 +4,16 @@ require 'rails_helper'
 require 'webmock/rspec'
 
 RSpec.describe BotRuntime::AudioTranscriptionService do
-  let(:file_url) { 'https://cdn.example.com/audio/note.ogg' }
   let(:groq_endpoint) { 'https://api.groq.com/openai/v1/audio/transcriptions' }
-  let(:tempfile) do
-    file = Tempfile.new(['note', '.ogg'])
-    file.binmode
-    file.write('fake audio bytes')
-    file.rewind
-    file
-  end
+  let(:file) { double('ActiveStorage::Attached::One', content_type: 'audio/ogg') } # rubocop:disable RSpec/VerifiedDoubles
+  let(:attachment) { instance_double(Attachment, file: file) }
 
   before do
     ENV['GROQ_API_KEY'] = 'test-groq-key'
-    allow(Down).to receive(:download).with(file_url).and_return(tempfile)
+    allow(file).to receive(:download) do |&block|
+      block.call('fake audio bytes')
+    end
   end
-
-  after { tempfile.close! }
 
   describe '#call' do
     it 'returns the transcript text on a successful Groq response' do
@@ -31,22 +25,22 @@ RSpec.describe BotRuntime::AudioTranscriptionService do
           headers: { 'Content-Type' => 'application/json' }
         )
 
-      result = described_class.new(file_url, 'audio/ogg').call
+      result = described_class.new(attachment).call
 
       expect(result).to eq('quanto custa o alternador do gol g5')
     end
 
     it 'raises TranscriptionError when the download fails' do
-      allow(Down).to receive(:download).with(file_url).and_raise(Down::Error, 'timeout')
+      allow(file).to receive(:download).and_raise(ActiveStorage::FileNotFoundError, 'not found')
 
-      expect { described_class.new(file_url, 'audio/ogg').call }
+      expect { described_class.new(attachment).call }
         .to raise_error(BotRuntime::AudioTranscriptionService::TranscriptionError, /download failed/)
     end
 
     it 'raises TranscriptionError when Groq responds with a non-2xx status' do
       stub_request(:post, groq_endpoint).to_return(status: 500, body: 'internal error')
 
-      expect { described_class.new(file_url, 'audio/ogg').call }
+      expect { described_class.new(attachment).call }
         .to raise_error(BotRuntime::AudioTranscriptionService::TranscriptionError, /Groq responded 500/)
     end
 
@@ -54,7 +48,7 @@ RSpec.describe BotRuntime::AudioTranscriptionService do
       stub_request(:post, groq_endpoint)
         .to_return(status: 200, body: { text: '' }.to_json, headers: { 'Content-Type' => 'application/json' })
 
-      expect { described_class.new(file_url, 'audio/ogg').call }
+      expect { described_class.new(attachment).call }
         .to raise_error(BotRuntime::AudioTranscriptionService::TranscriptionError, /empty transcript/)
     end
   end

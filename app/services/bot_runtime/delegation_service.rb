@@ -13,9 +13,7 @@ module BotRuntime
       audio_attachment = @message.attachments.find(&:audio?)
 
       if audio_attachment
-        BotRuntime::TranscribeAudioJob.perform_later(
-          event, audio_attachment.file_url, audio_attachment.file.content_type, @agent_bot, @conversation
-        )
+        BotRuntime::TranscribeAudioJob.perform_later(event, audio_attachment, @agent_bot, @conversation)
         Rails.logger.info "[BotRuntime::DelegationService] Audio message routed to transcription: " \
                           "conversation=#{@conversation.display_id} bot=#{@agent_bot.name}"
       else
