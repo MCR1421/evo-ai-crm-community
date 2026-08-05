@@ -10,10 +10,19 @@ module BotRuntime
 
     def delegate
       event = build_message_event
-      BotRuntime::SendEventJob.perform_later(event)
+      audio_attachment = @message.attachments.find(&:audio?)
 
-      Rails.logger.info "[BotRuntime::DelegationService] Event enqueued: " \
-                        "conversation=#{@conversation.display_id} bot=#{@agent_bot.name}"
+      if audio_attachment
+        BotRuntime::TranscribeAudioJob.perform_later(
+          event, audio_attachment.file_url, audio_attachment.file.content_type, @agent_bot, @conversation
+        )
+        Rails.logger.info "[BotRuntime::DelegationService] Audio message routed to transcription: " \
+                          "conversation=#{@conversation.display_id} bot=#{@agent_bot.name}"
+      else
+        BotRuntime::SendEventJob.perform_later(event)
+        Rails.logger.info "[BotRuntime::DelegationService] Event enqueued: " \
+                          "conversation=#{@conversation.display_id} bot=#{@agent_bot.name}"
+      end
     end
 
     private
