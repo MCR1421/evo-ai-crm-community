@@ -4,6 +4,19 @@ ENV['RAILS_ENV'] ||= 'test'
 require_relative '../config/environment'
 # Prevent database truncation if the environment is production
 abort("The Rails environment is running in production mode!") if Rails.env.production?
+
+# Prevent running specs against the live/dev database. POSTGRES_DATABASE is set
+# account-wide in .env, which overrides database.yml's test: block default
+# (evolution_test) unless explicitly overridden per-invocation - guard against
+# that footgun sending real Model.create!/truncation at the live database.
+if Rails.env.test?
+  test_db_name = ActiveRecord::Base.connection_db_config.database
+  unless test_db_name.include?('test')
+    abort "Refusing to run specs against database '#{test_db_name}' - it does not " \
+          "look like an isolated test database. Set POSTGRES_DATABASE=evolution_test " \
+          '(or another *_test database) before running specs.'
+  end
+end
 # Uncomment the line below in case you have `--require rails_helper` in the `.rspec` file
 # that will avoid rails generators crashing because migrations haven't been run yet
 # return unless Rails.env.test?
