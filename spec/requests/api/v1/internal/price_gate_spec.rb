@@ -28,6 +28,24 @@ RSpec.describe 'Api::V1::Internal::PriceGate', type: :request do
       body = JSON.parse(response.body)
       expect(body['released']).to be(false)
     end
+
+    it 'returns the same requested_at across repeated calls while pending' do
+      post '/api/v1/internal/price_gate/check',
+           params: { phone: phone, conversation_id: 'conv-1', agent_bot_id: 'bot-1', quote: { produto: 'Alternador Bosch' } },
+           headers: { 'X-Internal-Secret' => secret },
+           as: :json
+      first_requested_at = JSON.parse(response.body)['requested_at']
+
+      expect(first_requested_at).to be_present
+
+      post '/api/v1/internal/price_gate/check',
+           params: { phone: phone, conversation_id: 'conv-1', agent_bot_id: 'bot-1', quote: { produto: 'Alternador Bosch' } },
+           headers: { 'X-Internal-Secret' => secret },
+           as: :json
+      second_requested_at = JSON.parse(response.body)['requested_at']
+
+      expect(second_requested_at).to eq(first_requested_at)
+    end
   end
 
   describe 'POST /api/v1/internal/price_gate/release' do

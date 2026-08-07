@@ -16,7 +16,7 @@ class Api::V1::Internal::PriceGateController < ActionController::API
     if gate.released?
       render json: { released: true, quote: gate.pending_quote }, status: :ok
     else
-      render json: { released: false }, status: :ok
+      render json: { released: false, requested_at: gate.requested_at&.iso8601 }, status: :ok
     end
   end
 
