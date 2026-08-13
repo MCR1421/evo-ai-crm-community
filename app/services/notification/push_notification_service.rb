@@ -177,10 +177,12 @@ class Notification::PushNotificationService
   end
 
   def fcm_notification
-    {
+    base = {
       title: notification.push_message_title,
       body: notification.push_message_body
     }
+    image_url = notification.push_message_image_url
+    image_url.present? ? base.merge(image: image_url) : base
   end
 
   def fcm_android_options

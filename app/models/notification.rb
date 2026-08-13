@@ -81,29 +81,23 @@ class Notification < ApplicationRecord
 
   # rubocop:disable Metrics/MethodLength
   def push_message_title
-    notification_title_map = {
-      'conversation_creation' => 'notifications.notification_title.conversation_creation',
-      'conversation_assignment' => 'notifications.notification_title.conversation_assignment',
-      'assigned_conversation_new_message' => 'notifications.notification_title.assigned_conversation_new_message',
-      'participating_conversation_new_message' => 'notifications.notification_title.assigned_conversation_new_message',
-      'conversation_mention' => 'notifications.notification_title.conversation_mention'
-    }
-
-    i18n_key = notification_title_map[notification_type]
-    return '' unless i18n_key
-
-    # Handle cases where conversation or primary_actor might be nil
-    return '' unless conversation&.respond_to?(:display_id)
-
-    if notification_type == 'conversation_creation'
-      return '' unless primary_actor&.respond_to?(:inbox) && primary_actor.inbox&.respond_to?(:name)
-      I18n.t(i18n_key, display_id: conversation.display_id, inbox_name: primary_actor.inbox.name)
-    elsif %w[conversation_assignment assigned_conversation_new_message participating_conversation_new_message
-             conversation_mention].include?(notification_type)
-      I18n.t(i18n_key, display_id: conversation.display_id)
+    # WhatsApp-style: title is the contact's name (matches the OS-level
+    # notification convention every messaging app uses — sender as title,
+    # message text as body), falling back to a description for notification
+    # types that aren't tied to a specific message from a specific person.
+    case notification_type
+    when 'conversation_creation', 'sla_missed_first_response'
+      return '' unless conversation&.respond_to?(:messages)
+      sender_name(conversation.messages.first)
+    when 'assigned_conversation_new_message', 'participating_conversation_new_message', 'conversation_mention'
+      sender_name(secondary_actor)
+    when 'conversation_assignment'
+      return '' unless conversation&.respond_to?(:display_id)
+      I18n.t('notifications.notification_title.conversation_assignment', display_id: conversation.display_id)
     else
       return '' unless primary_actor&.respond_to?(:display_id)
-      I18n.t(i18n_key, display_id: primary_actor.display_id)
+      I18n.t('notifications.notification_title.conversation_creation', display_id: primary_actor.display_id,
+                                                                         inbox_name: primary_actor.try(:inbox)&.name)
     end
   end
   # rubocop:enable Metrics/MethodLength
@@ -112,15 +106,43 @@ class Notification < ApplicationRecord
     case notification_type
     when 'conversation_creation', 'sla_missed_first_response'
       return '' unless conversation&.respond_to?(:messages)
-      message_body(conversation.messages.first)
+      message_content(conversation.messages.first)
     when 'assigned_conversation_new_message', 'participating_conversation_new_message', 'conversation_mention'
-      message_body(secondary_actor)
+      message_content(secondary_actor)
     when 'conversation_assignment'
       return '' unless conversation&.respond_to?(:messages)
-      message_body((conversation.messages.incoming.last || conversation.messages.outgoing.last))
+      message_content((conversation.messages.incoming.last || conversation.messages.outgoing.last))
     else
       ''
     end
+  end
+
+  # Contact avatar shown as the push notification's image (WhatsApp-style),
+  # falling back to blank when there's no message/sender to attribute it to.
+  def push_message_image_url
+    actor = case notification_type
+            when 'conversation_creation', 'sla_missed_first_response'
+              conversation&.messages&.first
+            when 'assigned_conversation_new_message', 'participating_conversation_new_message', 'conversation_mention'
+              secondary_actor
+            when 'conversation_assignment'
+              conversation&.messages&.incoming&.last || conversation&.messages&.outgoing&.last
+            end
+    sender = actor.try(:sender)
+    return '' unless sender.respond_to?(:avatar_url)
+
+    url = sender.avatar_url
+    return '' if url.blank?
+
+    # FCM fetches this image server-side from Google's own infrastructure,
+    # not from the recipient's device — a LAN-only BACKEND_URL (default_url_options)
+    # is unreachable from there, so swap in a publicly routable host just for this field.
+    public_base = ENV.fetch('PUSH_IMAGE_BASE_URL', '')
+    return url if public_base.blank?
+
+    url.sub(ENV.fetch('BACKEND_URL', ''), public_base)
+  rescue StandardError
+    ''
   end
 
   def conversation
@@ -128,12 +150,6 @@ class Notification < ApplicationRecord
   end
 
   private
-
-  def message_body(actor)
-    sender_name = sender_name(actor)
-    content = message_content(actor)
-    "#{sender_name}: #{content}"
-  end
 
   def sender_name(actor)
     actor.try(:sender)&.name || ''
