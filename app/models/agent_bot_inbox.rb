@@ -111,13 +111,21 @@ class AgentBotInbox < ApplicationRecord
       return false
     end
 
-    status_allowed = allows_conversation_status?(conversation.status)
+    status_allowed = allows_conversation_status?(conversation.status) || open_without_human_reply?(conversation)
     labels_allowed = allows_conversation_labels?(conversation)
 
     return false unless status_allowed
     return false unless labels_allowed
 
     true
+  end
+
+  # After a handoff (e.g. transfer_to_human) flips a conversation to 'open', the bot would
+  # otherwise go silent even on a trivial customer follow-up ("quero 5 unidades") until a
+  # human replies. Let it keep helping while status is 'open' as long as no human agent has
+  # actually sent a message yet - the moment one does, this returns false and the bot stays quiet.
+  def open_without_human_reply?(conversation)
+    conversation.status.to_s == 'open' && !conversation.messages.outgoing.exists?(sender_type: 'User')
   end
 
   # Get the appropriate agent bot for a conversation
