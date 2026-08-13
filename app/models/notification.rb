@@ -117,8 +117,10 @@ class Notification < ApplicationRecord
     end
   end
 
-  # Contact avatar shown as the push notification's image (WhatsApp-style),
-  # falling back to blank when there's no message/sender to attribute it to.
+  # WhatsApp-style push image: the message's own photo when it's a photo
+  # message (matches WhatsApp showing the sent picture, not the sender's
+  # profile photo), falling back to the contact's avatar otherwise, and
+  # to blank when there's no message/sender to attribute it to.
   def push_message_image_url
     actor = case notification_type
             when 'conversation_creation', 'sla_missed_first_response'
@@ -128,10 +130,14 @@ class Notification < ApplicationRecord
             when 'conversation_assignment'
               conversation&.messages&.incoming&.last || conversation&.messages&.outgoing&.last
             end
-    sender = actor.try(:sender)
-    return '' unless sender.respond_to?(:avatar_url)
 
-    url = sender.avatar_url
+    image_attachment = actor.try(:attachments)&.detect { |a| a.file_type == 'image' }
+    url = if image_attachment
+            image_attachment.thumb_url.presence || image_attachment.file_url
+          else
+            sender = actor.try(:sender)
+            sender.respond_to?(:avatar_url) ? sender.avatar_url : ''
+          end
     return '' if url.blank?
 
     # FCM fetches this image server-side from Google's own infrastructure,
