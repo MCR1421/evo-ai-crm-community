@@ -55,5 +55,32 @@ RSpec.describe BotRuntime::DelegationService do
         described_class.new(agent_bot, message, conversation).delegate
       end
     end
+
+    context 'when the message has an image attachment' do
+      let(:message) do
+        Message.create!(inbox: inbox, conversation: conversation, message_type: :incoming, content: '')
+      end
+
+      before do
+        blob = ActiveStorage::Blob.create_and_upload!(
+          io: StringIO.new('fake image bytes'),
+          filename: 'peca.jpg',
+          content_type: 'image/jpeg'
+        )
+        attachment = message.attachments.build(file_type: 'image')
+        attachment.file.attach(blob)
+        message.save!
+      end
+
+      it 'sends the fallback reply directly and never delegates to the bot' do
+        expect(BotRuntime::SendEventJob).not_to receive(:perform_later)
+        expect(BotRuntime::TranscribeAudioJob).not_to receive(:perform_later)
+        expect_any_instance_of(AgentBots::MessageCreator)
+          .to receive(:create_bot_reply)
+          .with(BotRuntime::DelegationService::IMAGE_FALLBACK_TEXT, conversation, force: true)
+
+        described_class.new(agent_bot, message, conversation).delegate
+      end
+    end
   end
 end

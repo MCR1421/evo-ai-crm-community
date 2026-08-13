@@ -2,6 +2,8 @@
 
 module BotRuntime
   class DelegationService
+    IMAGE_FALLBACK_TEXT = 'Recebi sua foto! Aguarde só um instante que já vou chamar um atendente para te ajudar.'
+
     def initialize(agent_bot, message, conversation)
       @agent_bot = agent_bot
       @message = message
@@ -9,6 +11,9 @@ module BotRuntime
     end
 
     def delegate
+      image_attachment = @message.attachments.find(&:image?)
+      return handle_image_fallback if image_attachment
+
       event = build_message_event
       audio_attachment = @message.attachments.find(&:audio?)
 
@@ -24,6 +29,12 @@ module BotRuntime
     end
 
     private
+
+    def handle_image_fallback
+      AgentBots::MessageCreator.new(@agent_bot).create_bot_reply(IMAGE_FALLBACK_TEXT, @conversation, force: true)
+      Rails.logger.info "[BotRuntime::DelegationService] Image message got fallback reply: " \
+                        "conversation=#{@conversation.display_id} bot=#{@agent_bot.name}"
+    end
 
     def build_message_event
       {
