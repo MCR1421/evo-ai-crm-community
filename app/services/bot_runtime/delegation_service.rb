@@ -2,7 +2,8 @@
 
 module BotRuntime
   class DelegationService
-    IMAGE_FALLBACK_TEXT = 'Recebi sua foto! Aguarde só um instante que já vou chamar um atendente para te ajudar.'
+    IMAGE_FALLBACK_TEXT = 'Recebi sua foto, mas ainda não consigo analisar imagens 🙏 Me diz o nome ou código ' \
+                          'da peça em texto que eu já te ajudo, e um atendente também vai olhar a foto em instantes.'
 
     def initialize(agent_bot, message, conversation)
       @agent_bot = agent_bot
