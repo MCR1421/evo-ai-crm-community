@@ -9,7 +9,8 @@ class Api::V1::AssignableAgentsController < Api::V1::BaseController
     end
     agent_ids = agent_ids.inject(:&)
     agents = User.where(id: agent_ids)
-    @assignable_agents = (agents + User.with_role(:administrator)).uniq
+    admins = User.joins(:roles).where(roles: { key: Role::ADMIN_ROLE_KEYS })
+    @assignable_agents = (agents + admins).uniq
     
     success_response(
       data: UserSerializer.serialize_collection(@assignable_agents),
