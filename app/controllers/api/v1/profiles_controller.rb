@@ -25,6 +25,12 @@ class Api::V1::ProfilesController < Api::BaseController
   def availability
     @user.update!(availability: availability_params[:availability])
 
+    # NOTE: this is the only thing that actually makes the change visible to
+    # AutoAssignment::AgentAssignmentService (round robin reads from Redis,
+    # not the DB column) — without this call the toggle in the UI has no
+    # effect on conversation assignment no matter what the user picks.
+    ::OnlineStatusTracker.set_status(@user.id, @user.availability)
+
     Rails.configuration.dispatcher.dispatch(Events::Types::ACCOUNT_PRESENCE_UPDATED, Time.zone.now, user_id: @current_user.id,
                                                                                                     status: availability_params[:availability])
   end

@@ -89,6 +89,13 @@ class User < ApplicationRecord
   # Cache fields for display purposes only
   scope :order_by_full_name, -> { order(:name) }
 
+  # NOTE: without this, `availability` is a bare integer column — writes from
+  # string values ("online"/"busy"/"offline") silently cast to 0 via to_i,
+  # and reads return the raw integer instead of the status string that
+  # OnlineStatusTracker / the frontend expect. Matches upstream Chatwoot's
+  # Account::User ordering.
+  enum availability: { online: 0, offline: 1, busy: 2 }
+
   def conversations
     assigned_conversations
   end
