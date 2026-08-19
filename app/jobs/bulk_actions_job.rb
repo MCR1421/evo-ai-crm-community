@@ -79,10 +79,6 @@ class BulkActionsJob < ApplicationJob
     current_model = @params[:type].camelcase
     return unless MODEL_TYPE.include?(current_model)
 
-    if current_model == 'Contact'
-      current_model.constantize&.where(id: ids)
-    else
-      current_model.constantize&.where(display_id: ids)
-    end
+    current_model.constantize&.where(id: ids)
   end
 end
