@@ -1,4 +1,3 @@
-json.access_token resource.access_token.token
 json.available_name resource.available_name
 json.avatar_url resource.avatar_url
 json.confirmed resource.confirmed?

@@ -308,9 +308,19 @@ class Api::V1::ConversationsController < Api::V1::BaseController
     dispatch_messages_read_event if assignee?
 
     update_last_seen_on_conversation(DateTime.now.utc, assignee?)
-    
+    @conversation.reload
+
+    # NOTE: the mobile app's markMessageRead thunk reads id/unread_count/
+    # agent_last_seen_at straight off this response to patch its local
+    # Redux state without a full list refetch — an empty `data: {}` here
+    # means that patch silently no-ops (conversationId ends up undefined),
+    # so the unread badge never clears until the user pulls to refresh.
     success_response(
-      data: {},
+      data: {
+        id: @conversation.id,
+        unread_count: @conversation.unread_incoming_messages&.count || 0,
+        agent_last_seen_at: @conversation.agent_last_seen_at
+      },
       message: 'Last seen updated successfully'
     )
   end
@@ -321,9 +331,14 @@ class Api::V1::ConversationsController < Api::V1::BaseController
     last_incoming_message = @conversation.messages.incoming.last
     last_seen_at = last_incoming_message.created_at - 1.second if last_incoming_message.present?
     update_last_seen_on_conversation(last_seen_at, true)
+    @conversation.reload
 
     success_response(
-      data: {},
+      data: {
+        id: @conversation.id,
+        unread_count: @conversation.unread_incoming_messages&.count || 0,
+        agent_last_seen_at: @conversation.agent_last_seen_at
+      },
       message: 'Unread updated successfully'
     )
   end

@@ -57,6 +57,7 @@ module ConversationSerializer
       result['unread_count'] = conversation.unread_incoming_messages&.count || 0
     end
     result['custom_attributes'] = conversation.custom_attributes || {}
+    result['can_reply'] = conversation.can_reply?
 
     # Include contact
     if include_contact && conversation.contact.present?
