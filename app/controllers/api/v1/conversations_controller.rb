@@ -114,7 +114,7 @@ class Api::V1::ConversationsController < Api::V1::BaseController
     success_response(
       data: ConversationSerializer.serialize(
         @conversation,
-        include_messages: true,
+        include_messages: false,
         include_labels: true,
         labels_by_title: labels_by_title,
         labels_by_id: labels_by_id
