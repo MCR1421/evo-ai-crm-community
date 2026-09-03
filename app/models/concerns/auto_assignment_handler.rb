@@ -9,12 +9,17 @@ module AutoAssignmentHandler
   private
 
   def run_auto_assignment
-    # Round robin kicks in on conversation create & update
-    # run it only when conversation status changes to open
-    return unless conversation_status_changed_to_open?
+    # Round robin kicks in on conversation create (any status, so bot-owned
+    # inboxes get an assignee without touching status/pending) and whenever
+    # status changes to open
+    return unless newly_created? || conversation_status_changed_to_open?
     return unless should_run_auto_assignment?
 
     ::AutoAssignment::AgentAssignmentService.new(conversation: self, allowed_agent_ids: inbox.member_ids_with_assignment_capacity).perform
+  end
+
+  def newly_created?
+    previous_changes.key?(:id)
   end
 
   def should_run_auto_assignment?
