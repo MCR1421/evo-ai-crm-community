@@ -81,3 +81,10 @@ gmail_renew_watch_job:
   cron: '0 3 * * *'
   class: 'Gmail::RenewWatchJob'
   queue: low
+
+# executed At every 15th minute to auto resolve conversations idle past AUTO_RESOLVE_DURATION
+conversations_resolution_job:
+  cron: '*/15 * * * *'
+  class: 'Conversations::ResolutionJob'
+  queue: low
+  description: 'Auto resolve conversations idle past AUTO_RESOLVE_DURATION (GlobalConfig)'
