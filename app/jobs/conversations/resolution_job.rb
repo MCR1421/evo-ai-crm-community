@@ -15,7 +15,7 @@ class Conversations::ResolutionJob < ApplicationJob
       # send message from bot that conversation has been resolved
       ::MessageTemplates::Template::AutoResolve.new(conversation: conversation).perform if auto_resolve_message.present?
       conversation.add_labels(auto_resolve_label) if auto_resolve_label.present?
-      conversation.toggle_status
+      conversation.update!(status: :resolved)
     end
   end
 

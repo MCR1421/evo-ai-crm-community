@@ -76,12 +76,12 @@ class Conversation < ApplicationRecord
   scope :resolvable_not_waiting, lambda { |auto_resolve_after|
     return none if auto_resolve_after.to_i.zero?
 
-    open.where('last_activity_at < ? AND waiting_since IS NULL', Time.now.utc - auto_resolve_after.minutes)
+    where(status: [:open, :pending]).where('last_activity_at < ? AND waiting_since IS NULL', Time.now.utc - auto_resolve_after.minutes)
   }
   scope :resolvable_all, lambda { |auto_resolve_after|
     return none if auto_resolve_after.to_i.zero?
 
-    open.where('last_activity_at < ?', Time.now.utc - auto_resolve_after.minutes)
+    where(status: [:open, :pending]).where('last_activity_at < ?', Time.now.utc - auto_resolve_after.minutes)
   }
   scope :post_conversations, -> { where("additional_attributes->>'conversation_type' = ?", 'post') }
   scope :regular_conversations, -> { where("additional_attributes->>'conversation_type' IS NULL OR additional_attributes->>'conversation_type' != ?", 'post') }

@@ -9,7 +9,7 @@ class Account::ConversationsResolutionSchedulerJob < ApplicationJob
                                            .where('last_activity_at < ?', Time.now.utc - auto_resolve_duration.minutes)
                                            .limit(Limits::BULK_ACTIONS_LIMIT)
 
-    resolvable_conversations.each(&:toggle_status)
+    resolvable_conversations.each { |conversation| conversation.update!(status: :resolved) }
   end
 end
 Account::ConversationsResolutionSchedulerJob.prepend_mod_with('Account::ConversationsResolutionSchedulerJob')
